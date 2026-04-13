@@ -2,13 +2,30 @@
 
 ## How It Works
 
-CitationScope uses Node.js scripts for deterministic scoring and Claude for interpretation, synthesis, and recommendations. Scripts do the mechanical work (fetching pages, parsing HTML, counting patterns). Claude does the judgment work (assessing brand authority, evaluating E-E-A-T, writing recommendations).
+CitationScope has two phases: audit (diagnose) and restructure (treat). The audit runs against any domain with no setup. The restructuring requires a light brand onboard and a client Airtable base.
+
+Node.js scripts handle mechanical scoring. Claude handles judgment, brand voice, and writing.
+
+## Two-Tier Data Model
+
+### Prospecting Base (shared)
+One Airtable base for all prospects. Configured once during setup. Every `/audit` writes here.
+
+- **Prospects** table: one row per brand audited
+- **Audit Results** table: GEO Scores and category breakdowns per run
+- **Page Scores** table: per-page citability scores and grades
+
+### Client Base (per client)
+Created when a prospect converts via `/onboard`. One base per paying client.
+
+- **Brand Profile** table: voice, products, messaging (single record)
+- **Posts** table: URLs, original content, restructured content, before/after scores
 
 ## Components
 
 ### Scripts (tools/)
 
-Zero-dependency Node.js scripts. Each takes a URL or domain, fetches the page, and returns structured JSON.
+Zero-dependency Node.js scripts. Each takes a URL or domain and returns JSON.
 
 | Script | Input | What It Does |
 |--------|-------|--------------|
@@ -20,17 +37,21 @@ Zero-dependency Node.js scripts. Each takes a URL or domain, fetches the page, a
 
 | Agent | Model | Role |
 |-------|-------|------|
-| `site-analyzer` | Sonnet | Orchestrates scripts, assesses brand authority and E-E-A-T, runs AI Overview spot-check |
-| `report-builder` | Opus | Synthesizes all data into GEO Score, generates HTML report with restructuring recommendations |
+| `site-analyzer` | Sonnet | Orchestrates audit scripts, AI Overview spot-check, brand authority, E-E-A-T |
+| `report-builder` | Opus | Computes GEO Score, generates HTML report, restructuring recommendations |
+| `post-restructurer` | Opus | Rewrites individual posts for citability using brand profile |
 
-### Command (.claude/commands/)
+### Commands (.claude/commands/)
 
-| Command | What It Does |
-|---------|--------------|
-| `/audit [url]` | Full citability audit. Discovers pages, runs all analyses, generates report. |
+| Command | Phase | What It Does |
+|---------|-------|--------------|
+| `/audit [url]` | Diagnose | Score the site, produce report, save to prospecting base |
+| `/onboard [prospect]` | Convert | Create client base, light brand profile, import post URLs |
+| `/restructure` | Treat | Score and rewrite posts, save to client base |
 
 ## Data Flow
 
+### Audit Flow (Phase 1)
 ```
 /audit https://example.com
   |
@@ -39,20 +60,25 @@ Zero-dependency Node.js scripts. Each takes a URL or domain, fetches the page, a
   |
   v
 [site-analyzer agent]
-  |-- runs citability_scorer.js on each page --> JSON scores
-  |-- runs crawler_checker.js on domain --> JSON access map
-  |-- runs schema_checker.js on each page --> JSON schema audit
-  |-- DataForSEO SERP queries --> AI Overview spot-check
-  |-- WebFetch/SERP searches --> brand authority signals
-  |-- WebFetch on about page --> E-E-A-T assessment
+  |-- citability_scorer.js on each content page --> JSON scores
+  |-- crawler_checker.js on domain --> JSON access map
+  |-- schema_checker.js on each page --> JSON schema audit
+  |-- DataForSEO SERP --> AI Overview spot-check (5-10 keywords)
+  |-- WebFetch/SERP --> brand authority signals
+  |-- WebFetch --> E-E-A-T assessment
   |
   v
 [report-builder agent]
-  |-- computes GEO Score (weighted average)
-  |-- classifies issues by severity
+  |-- computes GEO Score
   |-- generates restructuring recommendations
-  |-- generates llms.txt for the domain
+  |-- generates llms.txt
   |-- builds HTML report
+  |
+  v
+[Airtable: Prospecting Base]
+  |-- Prospect record (brand, domain, status)
+  |-- Audit Result record (GEO Score, category scores)
+  |-- Page Score records (per-page citability)
   |
   v
 [Output]
@@ -60,6 +86,59 @@ Zero-dependency Node.js scripts. Each takes a URL or domain, fetches the page, a
   output/llms-{domain}.txt
 ```
 
-## No Persistence Layer
+### Restructuring Flow (Phase 2)
+```
+/onboard "Brand Name"
+  |-- creates client Airtable base (clone from template)
+  |-- light brand interview (voice, products, messaging)
+  |-- writes brand/profile.md
+  |-- imports post URLs from prospecting base
+  |-- scores all posts with citability_scorer.js
+  |
+  v
+/restructure
+  |-- loads brand profile
+  |-- prioritizes posts (by Google rank + citability gap)
+  |-- for each post:
+  |     |-- load original content
+  |     |-- [post-restructurer agent]
+  |     |     |-- rewrite with answer-first structure
+  |     |     |-- add brand-specific details
+  |     |     |-- generate schema JSON-LD
+  |     |-- run citability_scorer.js on new content
+  |     |-- save to Airtable (restructured content + new score)
+  |
+  v
+[Airtable: Client Base]
+  Posts table with before/after scores and restructured content
+  Client reviews and publishes to their own platform
+```
 
-CitationScope does not use Airtable or any database. All output is local files (HTML reports, JSON data). If integration with ContentEngine is needed later, the audit data can be imported.
+## Configuration
+
+### config/prospecting.json
+```json
+{
+  "base_id": "app...",
+  "tables": {
+    "prospects": "tbl...",
+    "audit_results": "tbl...",
+    "page_scores": "tbl..."
+  }
+}
+```
+
+### config/client.json (per-client, when active)
+```json
+{
+  "base_id": "app...",
+  "tables": {
+    "brand_profile": "tbl...",
+    "posts": "tbl..."
+  }
+}
+```
+
+## No Publishing
+
+CitationScope does not publish content. The restructured content is delivered in Airtable (or as files). The client publishes to their own platform. This keeps CitationScope simple and means it works with any CMS, including custom platforms.

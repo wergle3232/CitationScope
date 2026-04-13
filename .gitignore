@@ -1,6 +1,10 @@
 # CitationScope output
 output/
 
+# Client-specific (gitignored, per-client)
+brand/
+config/
+
 # Claude Code local settings
 .claude/settings.local.json
 
