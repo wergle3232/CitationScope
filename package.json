@@ -1,0 +1,15 @@
+{
+  "name": "citationscope",
+  "version": "0.1.0",
+  "description": "AI citability audit tool. Scores websites on whether AI platforms can extract, understand, and cite their content.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "citability": "node tools/citability_scorer.js",
+    "crawlers": "node tools/crawler_checker.js",
+    "schema": "node tools/schema_checker.js"
+  },
+  "keywords": ["ai", "citability", "seo", "geo", "audit"],
+  "author": "",
+  "license": "MIT"
+}
